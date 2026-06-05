@@ -56,9 +56,10 @@ def configure_logging(
         app: Application name stamped on the `app` field and the file name.
         app_args: Accepted for compatibility; ignored.
         level: Level-name override (defaults to LOG_LEVEL or INFO).
-        web_context: Mapping with 'ip_fn'/'user_fn' callables for web apps.
+        web_context: Accepted for compatibility; ignored. Web apps stamp the
+            request user via log.set_user() instead.
     """
-    _backend.configure(level=level, app=app, web_context=web_context)
+    _backend.configure(level=level, app=app)
 
 
 def log_exception(logger: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:

@@ -6,7 +6,9 @@ implementation would touch only this module.
 """
 from __future__ import annotations
 
+import contextvars
 import datetime
+import getpass
 import json
 import logging
 import logging.handlers
@@ -15,7 +17,6 @@ import pathlib
 import socket
 import sys
 import traceback
-from collections.abc import Callable
 from typing import Any
 
 from log import config
@@ -50,10 +51,21 @@ ANSI_RESET = '\033[0m'
 _OWNED_FLAG = '_applog_owned'
 
 _app_name = ''
-_web_context: dict[str, Callable[[], str]] = {}
-_ip_cache: dict[str, str] = {}
 _configured = False
 _fork_registered = False
+
+
+def _default_user() -> str:
+    """Best-effort process owner used as the default `user` stamp.
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        return ''
+
+
+_user_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    'applog_user', default=_default_user())
 
 
 class JsonFormatter(logging.Formatter):
@@ -78,9 +90,6 @@ class JsonFormatter(logging.Formatter):
         user = getattr(record, 'user', None)
         if user:
             payload['user'] = user
-        ip = getattr(record, 'ip', None)
-        if ip:
-            payload['ip'] = ip
         bound = getattr(record, 'context', None)
         if bound:
             for key, value in bound.items():
@@ -93,23 +102,16 @@ class ColoredFormatter(logging.Formatter):
     """Render a human-readable line, optionally ANSI-colored by level.
     """
 
-    def __init__(self, use_color: bool, web: bool) -> None:
+    def __init__(self, use_color: bool) -> None:
         super().__init__()
         self._use_color = use_color
-        self._web = web
 
     def format(self, record: logging.LogRecord) -> str:
         created = datetime.datetime.fromtimestamp(record.created)
         timestamp = created.strftime('%Y-%m-%d %H:%M:%S,') + f'{int(record.msecs):03d}'
         message = record.getMessage()
-        if self._web:
-            user = getattr(record, 'user', '') or ''
-            ip = getattr(record, 'ip', '') or ''
-            line = (f'{record.levelname:<4} {timestamp} {HOSTNAME} '
-                    f'{record.name} {record.lineno} [{user} {ip}] {message}')
-        else:
-            line = (f'{record.levelname:<4} {timestamp} {HOSTNAME} '
-                    f'{record.name} {record.lineno} {message}')
+        line = (f'{record.levelname:<4} {timestamp} {HOSTNAME} '
+                f'{record.name} {record.lineno} {message}')
         if record.exc_info:
             line = line + '\n' + ''.join(
                 traceback.format_exception(*record.exc_info)).rstrip()
@@ -120,44 +122,31 @@ class ColoredFormatter(logging.Formatter):
         return line
 
 
-class WebContextFilter(logging.Filter):
-    """Stamp the request user and reverse-resolved ip onto each record.
+class UserContextFilter(logging.Filter):
+    """Stamp the current context user onto each record.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.user = _safe_context_call(_web_context.get('user_fn'))
-        record.ip = _resolve_ip(_safe_context_call(_web_context.get('ip_fn')))
+        record.user = _user_var.get()
         return True
 
 
-def _safe_context_call(fn: Callable[[], str] | None) -> str:
-    """Call a web-context provider, returning '' when it is absent or raises.
+def set_user(user: str) -> None:
+    """Set the user stamped on subsequent records on this thread/context.
+
+    Web apps call this once per request (e.g. from a Flask before_request
+    hook) with the authenticated session user; it overrides the process-owner
+    default. Pass '' to clear it.
     """
-    if not fn:
-        return ''
-    try:
-        return fn() or ''
-    except Exception:
-        return ''
+    _user_var.set(user or '')
 
 
-def _resolve_ip(addr: str) -> str:
-    """Reverse-resolve an ip to a hostname, cached, with a short timeout.
+def set_app(name: str) -> None:
+    """Set the application name stamped on the `app` field and file name.
     """
-    if not addr:
-        return ''
-    if addr in _ip_cache:
-        return _ip_cache[addr]
-    old_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(config.DNS_TIMEOUT)
-    try:
-        resolved = socket.gethostbyaddr(addr)[0]
-    except (OSError, TimeoutError):
-        resolved = addr
-    finally:
-        socket.setdefaulttimeout(old_timeout)
-    _ip_cache[addr] = resolved
-    return resolved
+    global _app_name
+    if name:
+        _app_name = name
 
 
 def is_interactive() -> bool:
@@ -224,7 +213,7 @@ def _prune_stale_files(directory: str) -> None:
             continue
 
 
-def _make_console_handler(web: bool) -> logging.Handler:
+def _make_console_handler() -> logging.Handler:
     """Build the interactive colored console handler on stderr.
     """
     handler = logging.StreamHandler(sys.stderr)
@@ -232,7 +221,7 @@ def _make_console_handler(web: bool) -> logging.Handler:
         use_color = bool(sys.stderr.isatty())
     except (AttributeError, ValueError):
         use_color = False
-    handler.setFormatter(ColoredFormatter(use_color=use_color, web=web))
+    handler.setFormatter(ColoredFormatter(use_color=use_color))
     setattr(handler, _OWNED_FLAG, True)
     return handler
 
@@ -297,8 +286,7 @@ def _reinit_in_child() -> None:
     root = logging.getLogger()
     _remove_owned_handlers(root)
     handler = _make_file_handler()
-    if _web_context:
-        handler.addFilter(WebContextFilter())
+    handler.addFilter(UserContextFilter())
     root.addHandler(handler)
 
 
@@ -315,19 +303,15 @@ def _register_fork_reinit() -> None:
 def configure(
     level: str | None = None,
     app: str | None = None,
-    web_context: dict[str, Callable[[], str]] | None = None,
     ) -> None:
     """Configure the root logger for this process by environment mode.
     """
-    global _app_name, _web_context, _configured
+    global _app_name, _configured
 
     if app:
         _app_name = app
     elif not _app_name:
-        _app_name = derive_app_name()
-
-    if web_context:
-        _web_context = web_context
+        _app_name = os.getenv('LOG_APP') or derive_app_name()
 
     root = logging.getLogger()
     _remove_owned_handlers(root)
@@ -338,16 +322,14 @@ def configure(
         level_name = 'DEBUG'
     root.setLevel(LEVELS.get(level_name, logging.INFO))
 
-    web = bool(_web_context)
     if interactive:
-        handler = _make_console_handler(web=web)
+        handler = _make_console_handler()
     elif config.log_to_stdout():
         handler = _make_stdout_handler()
     else:
         handler = _make_file_handler()
         _register_fork_reinit()
-    if web:
-        handler.addFilter(WebContextFilter())
+    handler.addFilter(UserContextFilter())
     root.addHandler(handler)
 
     _apply_denylist()

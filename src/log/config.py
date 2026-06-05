@@ -27,7 +27,6 @@ NOISY_LOGGERS = (
 MAX_BYTES = 50 * 1024 * 1024
 BACKUP_COUNT = 5
 PRUNE_AFTER_DAYS = 7
-DNS_TIMEOUT = 1.0
 
 
 def log_dir() -> str:
