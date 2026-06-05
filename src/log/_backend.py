@@ -39,6 +39,12 @@ LEVELS = {
     'CRITICAL': logging.CRITICAL,
     }
 
+# Hard floor for shipped logs: DEBUG must NEVER reach CloudWatch. The file and
+# stdout handlers (the agent-tailed and Fargate-captured paths) pin their level
+# to INFO regardless of the root level, LOG_LEVEL, or set_level - DEBUG is a
+# console/dev-only level and is structurally unable to ship.
+SHIP_LEVEL_FLOOR = logging.INFO
+
 ANSI_COLORS = {
     'DEBUG': '\033[35m',
     'INFO': '\033[32m',
@@ -231,6 +237,7 @@ def _make_stdout_handler() -> logging.Handler:
     """
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    handler.setLevel(SHIP_LEVEL_FLOOR)
     setattr(handler, _OWNED_FLAG, True)
     return handler
 
@@ -256,6 +263,7 @@ def _make_file_handler() -> logging.Handler:
         delay=True,
         )
     handler.setFormatter(JsonFormatter())
+    handler.setLevel(SHIP_LEVEL_FLOOR)
     setattr(handler, _OWNED_FLAG, True)
     return handler
 

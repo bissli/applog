@@ -209,6 +209,35 @@ def test_derive_app_name_handles_windows_and_runner_paths(monkeypatch):
     assert _backend.derive_app_name() == 'app'
 
 
+def test_debug_never_ships_in_file_mode(monkeypatch, tmp_path):
+    """DEBUG never reaches the shipped JSON file, even with the root at DEBUG.
+    """
+    monkeypatch.setenv('LOG_LEVEL', 'DEBUG')
+    _config_file(monkeypatch, tmp_path, app='nodebug')
+    logging.getLogger('job').debug('secret debug')
+    logging.getLogger('job').info('shipped info')
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    messages = {r['message'] for r in records}
+    assert 'secret debug' not in messages
+    assert 'shipped info' in messages
+
+
+def test_debug_never_ships_in_stdout_mode(monkeypatch, tmp_path, capsys):
+    """DEBUG never reaches the Fargate stdout stream, even at root DEBUG.
+    """
+    monkeypatch.setenv('LOG_DEST', 'stdout')
+    monkeypatch.setenv('LOG_LEVEL', 'DEBUG')
+    monkeypatch.setenv('LOG_DIR', str(tmp_path))
+    log.configure_logging('job', app='nodebug')
+    logging.getLogger('job').debug('secret debug')
+    logging.getLogger('job').info('shipped info')
+    log.complete()
+    out = capsys.readouterr().out
+    assert 'secret debug' not in out
+    assert 'shipped info' in out
+
+
 def test_denylist_mutes_noisy_loggers(monkeypatch, tmp_path):
     """Default-noisy loggers drop INFO but keep WARNING and above.
     """
