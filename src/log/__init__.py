@@ -23,6 +23,7 @@ Usage:
 from typing import Any
 
 from log._backend import add_sink, auto_configure, complete, emit, remove_sink
+from log._backend import set_app, set_user
 from log._logger import Logger, get_logger
 from log.loggers import StderrStreamLogger
 from log.setup import SetupType, class_logger, configure_logging
@@ -88,6 +89,8 @@ __all__ = [
     'fatal',
     'add_sink',
     'remove_sink',
+    'set_user',
+    'set_app',
     'complete',
     'StderrStreamLogger',
     'patch_playwright',

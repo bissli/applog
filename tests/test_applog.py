@@ -16,13 +16,11 @@ def reset_backend():
     """Clear backend process state between tests.
     """
     _backend._remove_owned_handlers(logging.getLogger())
-    _backend._web_context = {}
-    _backend._ip_cache.clear()
+    _backend._user_var.set(_backend._default_user())
     _backend._app_name = ''
     yield
     _backend._remove_owned_handlers(logging.getLogger())
-    _backend._web_context = {}
-    _backend._ip_cache.clear()
+    _backend._user_var.set(_backend._default_user())
     _backend._app_name = ''
 
 
@@ -158,31 +156,43 @@ def test_module_level_helpers_ship(monkeypatch, tmp_path):
     assert any(r['message'] == 'module level' for r in records)
 
 
-def test_web_context_adds_user_ip_with_dns_cache(monkeypatch, tmp_path):
-    """The web filter stamps user/ip and reverse-resolves each ip once.
+def test_set_app_overrides_the_app_field(monkeypatch, tmp_path):
+    """set_app updates the app name stamped on subsequent records.
     """
-    calls = {'n': 0}
-
-    def fake_gethostbyaddr(addr):
-        calls['n'] += 1
-        return ('dns.google', [], [addr])
-
-    monkeypatch.setattr(_backend.socket, 'gethostbyaddr', fake_gethostbyaddr)
-    web_context = {
-        'user_fn': lambda: 'alice',
-        'ip_fn': lambda: '8.8.8.8',
-        }
-    _config_file(monkeypatch, tmp_path, setup='web', app='web', web_context=web_context)
-    weblog = logging.getLogger('web.tcweb')
-    weblog.info('first')
-    weblog.info('second')
+    _config_file(monkeypatch, tmp_path, app='orig')
+    log.set_app('renamed')
+    logging.getLogger('job').info('after rename')
     log.complete()
     _, records = _read_dir(tmp_path)
-    served = [r for r in records if r['message'] in {'first', 'second'}]
-    assert served
-    assert all(r['user'] == 'alice' for r in served)
-    assert all(r['ip'] == 'dns.google' for r in served)
-    assert calls['n'] == 1
+    record = next(r for r in records if r['message'] == 'after rename')
+    assert record['app'] == 'renamed'
+
+
+def test_default_user_is_the_process_owner(monkeypatch, tmp_path):
+    """Without set_user, each line is stamped with the process owner.
+    """
+    _config_file(monkeypatch, tmp_path, app='owned')
+    logging.getLogger('job').info('whoami')
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    record = next(r for r in records if r['message'] == 'whoami')
+    assert record['user'] == _backend._default_user()
+
+
+def test_set_user_stamps_and_clears_the_user_field(monkeypatch, tmp_path):
+    """set_user overrides the user stamp; clearing it drops the field.
+    """
+    _config_file(monkeypatch, tmp_path, app='web')
+    log.set_user('alice')
+    logging.getLogger('web.tcweb').info('with user')
+    log.set_user('')
+    logging.getLogger('web.tcweb').info('without user')
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    with_user = next(r for r in records if r['message'] == 'with user')
+    without_user = next(r for r in records if r['message'] == 'without user')
+    assert with_user['user'] == 'alice'
+    assert 'user' not in without_user
 
 
 def test_derive_app_name_handles_windows_and_runner_paths(monkeypatch):
@@ -197,24 +207,6 @@ def test_derive_app_name_handles_windows_and_runner_paths(monkeypatch):
     assert _backend.derive_app_name() == 'cftc_alert'
     monkeypatch.setattr(_backend.sys, 'argv', [''])
     assert _backend.derive_app_name() == 'app'
-
-
-def test_web_context_survives_failing_provider(monkeypatch, tmp_path):
-    """A web provider that raises does not break logging.
-    """
-    def boom_user():
-        raise RuntimeError('outside request context')
-
-    web_context = {
-        'user_fn': boom_user,
-        'ip_fn': lambda: '',
-        }
-    _config_file(monkeypatch, tmp_path, setup='web', app='web', web_context=web_context)
-    logging.getLogger('web.x').info('survives')
-    log.complete()
-    _, records = _read_dir(tmp_path)
-    record = next(r for r in records if r['message'] == 'survives')
-    assert 'user' not in record or record.get('user') == ''
 
 
 def test_denylist_mutes_noisy_loggers(monkeypatch, tmp_path):
