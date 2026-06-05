@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "applog"
+version = "0.1.0"
+description = "Drop-in stdlib logging that ships colored console interactively and flat JSON to a file the host log agent tails."
+authors = ["bissli <bissli@xyz.com>"]
+readme = "README.md"
+packages = [{ include = "log", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+colorama = { version = "*", markers = "sys_platform == 'win32'" }
+
+# == test
+pytest = { version = "*", optional = true }
+pytest-mock = { version = "*", optional = true }
+
+[tool.poetry.extras]
+test = [
+  "pytest",
+  "pytest-mock",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
