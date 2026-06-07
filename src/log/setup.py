@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
-from functools import wraps
 from typing import Any
 
 from log import _backend
+from log._logger import get_logger
 
 __all__ = [
     'configure_logging',
-    'log_exception',
+    'job',
+    'RunReport',
     'patch_playwright',
     'patch_webdriver',
     'class_logger',
@@ -62,23 +67,83 @@ def configure_logging(
     _backend.configure(level=level, app=app)
 
 
-def log_exception(logger: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator that logs any exception via `logger`, then re-raises it.
-
-    Works with both stdlib loggers and facade Logger instances. The logger's
-    exception() call carries the traceback into the `exception` JSON field.
+@dataclass
+class RunReport:
+    """Outcome a job() body fills in; read into the run_end event.
     """
-    def wrapper(fn: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(fn)
-        def wrapped(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return fn(*args, **kwargs)
-            except Exception as exc:
-                if hasattr(logger, 'exception'):
-                    logger.exception(str(exc))
-                raise
-        return wrapped
-    return wrapper
+    run_id: str
+    rows_processed: int | None = None
+
+
+_RESERVED_RUN_FIELDS = frozenset(
+    {'run_id', 'event', 'status', 'duration_ms', 'rows_processed'})
+
+
+@contextmanager
+def job(**fields: Any) -> Iterator[RunReport]:
+    """Log a job's run_start/run_end lifecycle; decorator or context manager.
+
+    The same `@contextmanager` object works both ways, so it fits a job entry
+    point as a one-line decorator (call it with parentheses; a bare
+    `@log.job` does not work):
+
+        @log.job()              # decorator: zero body changes
+        def main(): ...
+
+        with log.job() as run:  # context manager: also report rows
+            run.rows_processed = len(rows)
+
+    The decorator form brackets the whole function (including argument
+    parsing); the context-manager form brackets only its block and can also
+    report `rows_processed`. Do not decorate a generator function: the
+    lifecycle would bracket the generator's creation, not its iteration.
+
+    Emits `run_start` on entry and a matching `run_end` on exit (from a
+    finally, so a crash still closes the run); both share a `run_id`. `run_end`
+    carries `status` (ok/error), `duration_ms`, `rows_processed` (context-
+    manager form only), and any extra **fields. A clean `sys.exit()` (code 0 or
+    None) stays ok; a non-zero exit is an error; any other exception rides the
+    `run_end` line with its traceback before re-raising - so a job entry point
+    needs no separate exception-logging decorator. Field names follow the
+    convention in domain/logging/docs/emit-applog.md.
+
+    Args:
+        fields: Extra context bound to both lifecycle events (e.g. dataset).
+            The lifecycle field names in _RESERVED_RUN_FIELDS are rejected.
+
+    Returns:
+        A RunReport whose `rows_processed` attribute is read into run_end.
+    """
+    reserved = _RESERVED_RUN_FIELDS & fields.keys()
+    if reserved:
+        raise ValueError(
+            'job() reserves these field names: ' + ', '.join(sorted(reserved)))
+    run_id = uuid.uuid4().hex
+    base = get_logger('job.run').bind(run_id=run_id, **fields)
+    report = RunReport(run_id)
+    started = time.perf_counter()
+    base.bind(event='run_start').info('run_start')
+    status = 'ok'
+    summary = 'run_end'
+    attach_trace = False
+    try:
+        yield report
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            status, summary = 'error', f'exited with code {exc.code}'
+        raise
+    except BaseException as exc:
+        status, summary, attach_trace = 'error', f'{type(exc).__name__}: {exc}', True
+        raise
+    finally:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        end = base.bind(event='run_end', status=status, duration_ms=duration_ms)
+        if report.rows_processed is not None:
+            end = end.bind(rows_processed=report.rows_processed)
+        if status == 'error':
+            end.error(summary, exc_info=attach_trace)
+        else:
+            end.info(summary)
 
 
 def set_level(levelname: str) -> None:
