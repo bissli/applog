@@ -12,12 +12,12 @@ Usage:
     db = log.get_logger('database')
     db.bind(request_id='abc123').info('query executed')
 
-    import logging
-    @log.log_exception(logging.getLogger(__name__))
-    def risky():
+    @log.job()
+    def main():
         ...
 
     # plain stdlib logging is shipped natively too
+    import logging
     logging.getLogger('job').info('this works without any setup')
 """
 from typing import Any
@@ -26,8 +26,8 @@ from log._backend import add_sink, auto_configure, complete, emit, remove_sink
 from log._backend import set_app, set_user
 from log._logger import Logger, get_logger
 from log.loggers import StderrStreamLogger
-from log.setup import SetupType, class_logger, configure_logging
-from log.setup import log_exception, patch_playwright, patch_webdriver
+from log.setup import RunReport, SetupType, class_logger, configure_logging
+from log.setup import job, patch_playwright, patch_webdriver
 from log.setup import set_level
 
 auto_configure()
@@ -96,5 +96,6 @@ __all__ = [
     'patch_playwright',
     'patch_webdriver',
     'class_logger',
-    'log_exception',
+    'job',
+    'RunReport',
     ]

@@ -26,8 +26,8 @@ log.info('Application started')
 db = log.get_logger('database')
 db.bind(request_id='abc123').info('query executed')
 
-@log.log_exception(log.get_logger(__name__))
-def risky():
+@log.job()             # job entry point: logs run_start/run_end + failures
+def main():
     ...
 ```
 

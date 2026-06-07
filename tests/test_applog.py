@@ -114,13 +114,12 @@ def test_srp_behaves_like_job(monkeypatch, tmp_path):
     assert any(r['message'] == 'service line' for r in records)
 
 
-def test_log_exception_puts_traceback_in_exception_field(monkeypatch, tmp_path):
-    """The log_exception decorator records the traceback and re-raises.
+def test_job_brackets_and_reraises_with_traceback(monkeypatch, tmp_path):
+    """job emits run_start/run_end sharing a run_id and re-raises failures.
     """
     _config_file(monkeypatch, tmp_path)
-    logger = logging.getLogger('job')
 
-    @log.log_exception(logger)
+    @log.job()
     def boom():
         raise ValueError('kaboom')
 
@@ -128,10 +127,67 @@ def test_log_exception_puts_traceback_in_exception_field(monkeypatch, tmp_path):
         boom()
     log.complete()
     _, records = _read_dir(tmp_path)
-    failures = [r for r in records if r['level'] == 'ERROR']
-    assert failures
-    assert any('ValueError' in r.get('exception', '')
-               and 'kaboom' in r.get('exception', '') for r in failures)
+    events = {r.get('event'): r for r in records if r.get('event')}
+    assert events['run_start']['run_id'] == events['run_end']['run_id']
+    end = events['run_end']
+    assert end['status'] == 'error' and end['level'] == 'ERROR'
+    assert 'ValueError' in end.get('exception', '') and 'kaboom' in end.get('exception', '')
+
+
+def test_job_clean_exit_stays_ok(monkeypatch, tmp_path):
+    """A clean sys.exit(0) closes the run as ok, not a failure.
+    """
+    _config_file(monkeypatch, tmp_path)
+
+    @log.job()
+    def clean():
+        raise SystemExit(0)
+
+    with pytest.raises(SystemExit):
+        clean()
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    end = next(r for r in records if r.get('event') == 'run_end')
+    assert end['status'] == 'ok' and end['level'] == 'INFO'
+
+
+def test_job_nonzero_exit_is_error_without_traceback(monkeypatch, tmp_path):
+    """A non-zero exit is an error, with no fabricated traceback.
+    """
+    _config_file(monkeypatch, tmp_path)
+
+    @log.job()
+    def bad():
+        raise SystemExit(2)
+
+    with pytest.raises(SystemExit):
+        bad()
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    end = next(r for r in records if r.get('event') == 'run_end')
+    assert end['status'] == 'error' and 'code 2' in end['message']
+    assert 'exception' not in end
+
+
+def test_job_context_manager_reports_rows(monkeypatch, tmp_path):
+    """The context-manager form records rows_processed and extra fields.
+    """
+    _config_file(monkeypatch, tmp_path)
+    with log.job(dataset='prices') as run:
+        run.rows_processed = 5
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    end = next(r for r in records if r.get('event') == 'run_end')
+    assert end['status'] == 'ok' and end['rows_processed'] == 5 and end['dataset'] == 'prices'
+
+
+def test_job_rejects_reserved_fields(monkeypatch, tmp_path):
+    """A reserved lifecycle field name fails loudly rather than silently.
+    """
+    _config_file(monkeypatch, tmp_path)
+    with pytest.raises(ValueError):
+        with log.job(status='oops'):
+            pass
 
 
 def test_get_logger_bind_merges_context(monkeypatch, tmp_path):
