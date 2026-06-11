@@ -60,6 +60,7 @@ directly.
 | Variable                    | Effect                                            |
 | --------------------------- | ------------------------------------------------- |
 | `LOG_DIR`                   | Override the rendezvous directory                 |
-| `LOG_CONSOLE`               | Force colored console mode even when not a TTY    |
+| `LOG_CONSOLE`               | Force console mode; overrides `LOG_FORCE_FILE`    |
+| `LOG_FORCE_FILE`            | Force file mode (for services whose TTY lies)     |
 | `LOG_LEVEL`                 | Default level (else INFO)                         |
 | `CONFIG_LOG_MODULES_IGNORE` | Extra logger names to pin to WARNING (comma list) |

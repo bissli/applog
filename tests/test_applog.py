@@ -80,6 +80,19 @@ def test_console_mode_writes_no_file(monkeypatch, tmp_path):
     assert not any('.jsonl' in f for f in os.listdir(tmp_path))
 
 
+def test_log_console_overrides_log_force_file(monkeypatch, tmp_path):
+    """LOG_CONSOLE wins over LOG_FORCE_FILE so a forced-file app can
+    still be run by hand with console output.
+    """
+    monkeypatch.setenv('LOG_FORCE_FILE', '1')
+    monkeypatch.setenv('LOG_CONSOLE', '1')
+    monkeypatch.setenv('LOG_DIR', str(tmp_path))
+    log.configure_logging('cmd', app='consoleapp')
+    logging.getLogger('job').info('not on disk')
+    log.complete()
+    assert not any('.jsonl' in f for f in os.listdir(tmp_path))
+
+
 def test_native_stdlib_logger_is_shipped(monkeypatch, tmp_path):
     """A plain logging.getLogger(name).info lands in the file natively.
     """
