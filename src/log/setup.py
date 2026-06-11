@@ -100,12 +100,14 @@ def job(**fields: Any) -> Iterator[RunReport]:
 
     Emits `run_start` on entry and a matching `run_end` on exit (from a
     finally, so a crash still closes the run); both share a `run_id`. `run_end`
-    carries `status` (ok/error), `duration_ms`, `rows_processed` (context-
-    manager form only), and any extra **fields. A clean `sys.exit()` (code 0 or
-    None) stays ok; a non-zero exit is an error; any other exception rides the
-    `run_end` line with its traceback before re-raising - so a job entry point
-    needs no separate exception-logging decorator. Field names follow the
-    convention in domain/logging/docs/emit-applog.md.
+    carries `status` (ok/cancelled/error), `duration_ms`, `rows_processed`
+    (context-manager form only), and any extra **fields. A clean `sys.exit()`
+    (code 0 or None) stays ok; an operator interrupt (KeyboardInterrupt) closes
+    the run as `cancelled` at INFO with no traceback; a non-zero exit is an
+    error; any other exception rides the `run_end` line with its traceback
+    before re-raising - so a job entry point needs no separate exception-logging
+    decorator. Field names follow the convention in
+    domain/logging/docs/emit-applog.md.
 
     Args:
         fields: Extra context bound to both lifecycle events (e.g. dataset).
@@ -131,6 +133,9 @@ def job(**fields: Any) -> Iterator[RunReport]:
     except SystemExit as exc:
         if exc.code not in (0, None):
             status, summary = 'error', f'exited with code {exc.code}'
+        raise
+    except KeyboardInterrupt:
+        status, summary = 'cancelled', 'cancelled (KeyboardInterrupt)'
         raise
     except BaseException as exc:
         status, summary, attach_trace = 'error', f'{type(exc).__name__}: {exc}', True

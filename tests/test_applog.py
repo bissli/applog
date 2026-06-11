@@ -182,6 +182,24 @@ def test_job_nonzero_exit_is_error_without_traceback(monkeypatch, tmp_path):
     assert 'exception' not in end
 
 
+def test_job_keyboard_interrupt_is_cancelled_without_traceback(monkeypatch, tmp_path):
+    """An operator Ctrl-C closes the run as cancelled, not an error traceback.
+    """
+    _config_file(monkeypatch, tmp_path)
+
+    @log.job()
+    def interrupted():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        interrupted()
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    end = next(r for r in records if r.get('event') == 'run_end')
+    assert end['status'] == 'cancelled' and end['level'] == 'INFO'
+    assert 'exception' not in end
+
+
 def test_job_context_manager_reports_rows(monkeypatch, tmp_path):
     """The context-manager form records rows_processed and extra fields.
     """
