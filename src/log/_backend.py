@@ -157,13 +157,17 @@ def set_app(name: str) -> None:
 
 def is_interactive() -> bool:
     """Return True for terminal, pytest, or LOG_CONSOLE runs (console mode).
+
+    LOG_CONSOLE is an explicit operator opt-in and beats LOG_FORCE_FILE.
+    The implicit signals (pytest, isatty) stay below LOG_FORCE_FILE
+    because isatty() reports True inside a session-0 Windows service.
     """
+    if os.getenv('LOG_CONSOLE'):
+        return True
     if os.getenv('LOG_FORCE_FILE'):
         return False
     if config.log_to_stdout():
         return False
-    if os.getenv('LOG_CONSOLE'):
-        return True
     if 'pytest' in sys.modules:
         return True
     try:
