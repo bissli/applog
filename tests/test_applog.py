@@ -221,6 +221,46 @@ def test_job_rejects_reserved_fields(monkeypatch, tmp_path):
             pass
 
 
+def test_timed_emits_one_event_with_entry_and_update_fields(monkeypatch, tmp_path):
+    """timed emits a single ok event carrying op, duration_ms, and merged fields.
+    """
+    _config_file(monkeypatch, tmp_path)
+    with log.timed('split_similarity', input_chars=120) as m:
+        m.update(output_count=4, device='cpu')
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    events = [r for r in records if r.get('op') == 'split_similarity']
+    assert len(events) == 1
+    event = events[0]
+    assert event['status'] == 'ok' and event['level'] == 'INFO'
+    assert event['input_chars'] == 120 and event['output_count'] == 4
+    assert event['device'] == 'cpu' and isinstance(event['duration_ms'], int)
+
+
+def test_timed_records_error_status_and_reraises(monkeypatch, tmp_path):
+    """A failing body closes the event as error with a traceback and re-raises.
+    """
+    _config_file(monkeypatch, tmp_path)
+    with pytest.raises(ValueError):
+        with log.timed('extract_pdf', input_bytes=10):
+            raise ValueError('bad pdf')
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    event = next(r for r in records if r.get('op') == 'extract_pdf')
+    assert event['status'] == 'error' and event['level'] == 'ERROR'
+    assert 'ValueError' in event.get('exception', '')
+    assert isinstance(event['duration_ms'], int)
+
+
+def test_timed_rejects_reserved_fields(monkeypatch, tmp_path):
+    """A reserved field name fails loudly rather than colliding silently.
+    """
+    _config_file(monkeypatch, tmp_path)
+    with pytest.raises(ValueError):
+        with log.timed('op', status='oops'):
+            pass
+
+
 def test_get_logger_bind_merges_context(monkeypatch, tmp_path):
     """get_logger().bind() adds context fields to the JSON line.
     """

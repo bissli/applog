@@ -28,7 +28,7 @@ from log._logger import Logger, get_logger
 from log.loggers import StderrStreamLogger
 from log.setup import RunReport, SetupType, class_logger, configure_logging
 from log.setup import job, patch_playwright, patch_webdriver
-from log.setup import set_level
+from log.setup import set_level, timed, TimedReport
 
 auto_configure()
 
@@ -98,4 +98,6 @@ __all__ = [
     'class_logger',
     'job',
     'RunReport',
+    'timed',
+    'TimedReport',
     ]

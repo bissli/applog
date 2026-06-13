@@ -18,6 +18,8 @@ __all__ = [
     'configure_logging',
     'job',
     'RunReport',
+    'timed',
+    'TimedReport',
     'patch_playwright',
     'patch_webdriver',
     'class_logger',
@@ -113,7 +115,7 @@ def job(**fields: Any) -> Iterator[RunReport]:
         fields: Extra context bound to both lifecycle events (e.g. dataset).
             The lifecycle field names in _RESERVED_RUN_FIELDS are rejected.
 
-    Returns:
+    Returns
         A RunReport whose `rows_processed` attribute is read into run_end.
     """
     reserved = _RESERVED_RUN_FIELDS & fields.keys()
@@ -131,7 +133,7 @@ def job(**fields: Any) -> Iterator[RunReport]:
     try:
         yield report
     except SystemExit as exc:
-        if exc.code not in (0, None):
+        if exc.code not in {0, None}:
             status, summary = 'error', f'exited with code {exc.code}'
         raise
     except KeyboardInterrupt:
@@ -149,6 +151,69 @@ def job(**fields: Any) -> Iterator[RunReport]:
             end.error(summary, exc_info=attach_trace)
         else:
             end.info(summary)
+
+
+@dataclass
+class TimedReport:
+    """Mutable metrics a timed() body fills in; merged into the completion event.
+    """
+    fields: dict[str, Any]
+
+    def update(self, **fields: Any) -> None:
+        """Add or overwrite metric fields recorded on the completion event.
+        """
+        self.fields.update(fields)
+
+
+_RESERVED_TIMED_FIELDS = frozenset({'op', 'status', 'duration_ms'})
+
+
+@contextmanager
+def timed(op: str, **fields: Any) -> Iterator[TimedReport]:
+    """Time one operation and emit a single structured completion event.
+
+    Unlike job(), which brackets a whole run with run_start/run_end lifecycle
+    events and a run_id, timed() emits exactly one INFO line on exit -- suited
+    to high-frequency per-request operations such as an API handler. The line
+    carries `op`, `duration_ms`, `status` (ok|error), the fields passed at
+    entry, and any added via the returned report's update(). On an exception
+    the status is `error`, the traceback rides the line, and it re-raises.
+
+    Args:
+        op: Short operation name stamped on the `op` field.
+        fields: Extra context fields known at entry (e.g. input_chars). The
+            reserved names op/status/duration_ms are rejected.
+
+    Returns
+        A TimedReport whose update(**fields) adds output metrics to the event.
+
+    Example:
+        with log.timed('split_similarity', input_chars=len(text)) as m:
+            chunks = split(text)
+            m.update(output_count=len(chunks), device='cpu')
+    """
+    reserved = _RESERVED_TIMED_FIELDS & fields.keys()
+    if reserved:
+        raise ValueError(
+            'timed() reserves these field names: ' + ', '.join(sorted(reserved)))
+    report = TimedReport(dict(fields))
+    started = time.perf_counter()
+    status = 'ok'
+    summary = f'{op} complete'
+    attach_trace = False
+    try:
+        yield report
+    except BaseException as exc:
+        status, summary, attach_trace = 'error', f'{type(exc).__name__}: {exc}', True
+        raise
+    finally:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        event = get_logger('op.timed').bind(**report.fields).bind(
+            op=op, status=status, duration_ms=duration_ms)
+        if status == 'error':
+            event.error(summary, exc_info=attach_trace)
+        else:
+            event.info(summary)
 
 
 def set_level(levelname: str) -> None:
