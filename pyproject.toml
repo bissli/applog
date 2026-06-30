@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "applog"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drop-in stdlib logging that ships colored console interactively and flat JSON to a file the host log agent tails."
 authors = ["bissli <bissli@xyz.com>"]
 readme = "README.md"
