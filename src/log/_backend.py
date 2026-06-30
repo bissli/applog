@@ -137,6 +137,29 @@ class UserContextFilter(logging.Filter):
         return True
 
 
+class HealthProbeFilter(logging.Filter):
+    """Drop successful health-probe lines from the uvicorn.access logger.
+
+    Liveness/readiness probes (ALB target groups, k8s) hit a health path
+    every few seconds on every app, flooding the access log. This drops the
+    2xx/3xx GET probe lines while keeping non-success responses (a failing
+    probe stays visible) and every other access record. Attached to the
+    uvicorn.access logger directly so it never runs on the app's hot path.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        method, full_path, status = args[1], args[2], args[4]
+        if method != 'GET' or not isinstance(status, int):
+            return True
+        path = str(full_path).split('?', 1)[0]
+        if path in config.HEALTH_PROBE_PATHS and 200 <= status < 400:
+            return False
+        return True
+
+
 def set_user(user: str) -> None:
     """Set the user stamped on subsequent records on this thread/context.
 
@@ -290,6 +313,15 @@ def _apply_denylist() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def _install_health_filter() -> None:
+    """Drop successful health-probe lines from uvicorn.access (idempotent).
+    """
+    access = logging.getLogger('uvicorn.access')
+    access.filters = [f for f in access.filters
+                      if not isinstance(f, HealthProbeFilter)]
+    access.addFilter(HealthProbeFilter())
+
+
 def _reinit_in_child() -> None:
     """Give a forked child its own pid-named file so lines never interleave.
     """
@@ -345,6 +377,7 @@ def configure(
     root.addHandler(handler)
 
     _apply_denylist()
+    _install_health_filter()
     _configured = True
 
 
