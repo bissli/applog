@@ -24,6 +24,15 @@ NOISY_LOGGERS = (
     'websockets',
     )
 
+HEALTH_PROBE_PATHS = frozenset({
+    '/health',
+    '/healthz',
+    '/ready',
+    '/readyz',
+    '/live',
+    '/livez',
+    })
+
 MAX_BYTES = 50 * 1024 * 1024
 BACKUP_COUNT = 5
 PRUNE_AFTER_DAYS = 7

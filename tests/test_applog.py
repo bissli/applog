@@ -394,6 +394,27 @@ def test_extra_denylist_from_env(monkeypatch, tmp_path):
     assert 'shown' in messages
 
 
+def test_health_probe_filter_drops_only_successful_get_probes(monkeypatch, tmp_path):
+    """uvicorn.access keeps real traffic and failing probes, drops 2xx GET /health.
+    """
+    _config_file(monkeypatch, tmp_path)
+    access = logging.getLogger('uvicorn.access')
+    fmt = '%s - "%s %s HTTP/%s" %d'
+    access.info(fmt, '10.0.0.1:5', 'GET', '/health', '1.1', 200)
+    access.info(fmt, '10.0.0.1:5', 'GET', '/healthz?x=1', '1.1', 204)
+    access.info(fmt, '10.0.0.1:5', 'GET', '/health', '1.1', 503)
+    access.info(fmt, '10.0.0.1:5', 'POST', '/health', '1.1', 200)
+    access.info(fmt, '10.0.0.1:5', 'GET', '/api/orders', '1.1', 200)
+    log.complete()
+    _, records = _read_dir(tmp_path)
+    paths = [r['message'] for r in records]
+    assert not any('GET /health ' in p and ' 200' in p for p in paths)
+    assert not any('/healthz' in p for p in paths)
+    assert any('/health' in p and '503' in p for p in paths)
+    assert any('POST /health' in p for p in paths)
+    assert any('/api/orders' in p for p in paths)
+
+
 def test_rotation_bounds_a_long_writer(monkeypatch, tmp_path):
     """A small maxBytes makes a long-running writer roll into backups.
     """
